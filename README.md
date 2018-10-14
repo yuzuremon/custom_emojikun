@@ -1,0 +1,2 @@
+# custom_emojikun
+slackへカスタム絵文字を登録するツール
