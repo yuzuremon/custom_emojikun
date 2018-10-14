@@ -15,18 +15,16 @@ use std::net::SocketAddr;
 use std::fs::{File, remove_file};
 use std::io::{BufReader, Read, BufWriter, Write};
 use reqwest::Client;
-use reqwest::header::{HeaderMap, COOKIE};
 use reqwest::multipart::Form;
 use yaml_rust::{Yaml, YamlLoader};
 use futures::{future::ok as fut_ok, Future};
-use actix_web::{http::Method, server, App, Error, HttpResponse, HttpMessage, HttpRequest,};
+use actix_web::{http::Method, server, App, Error, HttpResponse, HttpMessage, HttpRequest};
 use serde_json::Value;
 
 const FILE_NAME: &str = "emoji.png";
 
 #[derive(Debug)]
 struct SlackConfig {
-    cookie: Yaml,
     workspace_name: Yaml,
     api_token: Yaml
 }
@@ -40,15 +38,14 @@ impl SlackConfig {
         let docs = YamlLoader::load_from_str(&mut s).unwrap();
 
         SlackConfig {
-            cookie: docs[0][0].clone(),
-            workspace_name: docs[0][1].clone(),
-            api_token: docs[0][2].clone(),
+            workspace_name: docs[0][0].clone(),
+            api_token: docs[0][1].clone(),
         }
     }
 }
 
 // 絵文字のアップロードを行う
-fn upload_emoji(url: &str, headers: HeaderMap, form: Form, emoji_name: &str, api_token: &str)
+fn upload_emoji(url: &str, form: Form, emoji_name: &str, api_token: &str)
 -> impl Future<Item = String, Error = Error> {
     // カスタム絵文字アップロードリクエスト
     let mut res = Client::new()
@@ -57,7 +54,6 @@ fn upload_emoji(url: &str, headers: HeaderMap, form: Form, emoji_name: &str, api
             ("mode", "data"),
             ("name", emoji_name),
             ("token", api_token)])
-        .headers(headers)
         .multipart(form)
         .send()
         .unwrap();
@@ -115,17 +111,13 @@ fn upload_process(req: HttpRequest) -> impl Future<Item = HttpResponse, Error = 
             let slack_url_add = format!(
                 r#"https://{}.slack.com/api/emoji.add"#,
                     slack_config.workspace_name.into_string().unwrap());
-            // Headerを生成
-            let mut headers = HeaderMap::new();
-            // 生成したCookieをHeaderにセット
-            headers.append(COOKIE, slack_config.cookie.as_str().unwrap().parse().unwrap());
             // 画像アップロード用リクエストを生成
             let form = Form::new()
                 .file("image", FILE_NAME)
                 .expect("画像ファイルを開けませんでした。");
 
             // 絵文字アップロード
-            upload_emoji(slack_url_add.as_str(), headers, form, emoji_name, slack_config.api_token.as_str().unwrap())
+            upload_emoji(slack_url_add.as_str(), form, emoji_name, slack_config.api_token.as_str().unwrap())
                 .and_then(|d| {
                     // ファイル削除
                     remove_file(FILE_NAME)
