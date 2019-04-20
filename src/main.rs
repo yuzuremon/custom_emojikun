@@ -73,6 +73,33 @@ fn upload_emoji(url: &str, form: Form, emoji_name: &str, api_token: &str)
     }
 }
 
+// 絵文字の削除を行う
+fn remove_emoji(url: &str, emoji_name: &str, api_token: &str)
+-> impl Future<Item = String, Error = Error> {
+    // カスタム絵文字削除リクエスト
+    let mut res = Client::new()
+        .post(url)
+        .query(&[
+            ("name", emoji_name),
+            ("token", api_token)])
+        .send()
+        .unwrap();
+
+    match res.text() {
+        Err(e) => fut_ok(String::from(format!("削除失敗:{:?}", e))),
+        Ok(result) => {
+            let v: Value = serde_json::from_str(result.as_str()).unwrap();
+
+            // エラー判定
+            match v["ok"].as_bool() {
+                Some(true) => fut_ok(String::from(format!("削除完了::{}:", "yattane"))),
+                Some(false) => fut_ok(String::from(format!("削除失敗:{}", v["error"]))),
+                None => fut_ok(String::from(format!("削除失敗:{}", v["error"]))),
+            }
+        }
+    }
+}
+
 /// URLから画像を取得してローカルに保存する
 fn download_image(url: &str) {
     // 画像データの取得
@@ -97,37 +124,59 @@ fn upload_process(req: HttpRequest) -> impl Future<Item = HttpResponse, Error = 
     req.urlencoded::<HashMap<String, String>>()
         .from_err()
         .and_then(|params| {
-            // 空白で文字列を分割する 絵文字画像URL 登録絵文字名
-            let v: Vec<&str> = params.get("text").unwrap().split(' ').collect();
-            let emoji_url: &str = v.get(0).unwrap();
-            let emoji_name: &str = v.get(1).unwrap();
+            // コマンドで判別
+            if params.get("command").unwrap() == "addemoji" {
+                // 空白で文字列を分割する 絵文字画像URL 登録絵文字名
+                let v: Vec<&str> = params.get("text").unwrap().split(' ').collect();
+                let emoji_url: &str = v.get(0).unwrap();
+                let emoji_name: &str = v.get(1).unwrap();
 
-            // アップロードする画像の取得
-            download_image(emoji_url);
+                // アップロードする画像の取得
+                download_image(emoji_url);
 
-            // ymlデータ取得
-            let slack_config = SlackConfig::new();
-            // slackへの画像アップロード用リクエストURLを作成
-            let slack_url_add = format!(
-                r#"https://{}.slack.com/api/emoji.add"#,
-                    slack_config.workspace_name.into_string().unwrap());
-            // 画像アップロード用リクエストを生成
-            let form = Form::new()
-                .file("image", FILE_NAME)
-                .expect("画像ファイルを開けませんでした。");
+                // ymlデータ取得
+                let slack_config = SlackConfig::new();
+                // slackへの画像アップロード用リクエストURLを作成
+                let slack_url_add = format!(
+                    r#"https://{}.slack.com/api/emoji.add"#,
+                        slack_config.workspace_name.into_string().unwrap());
+                // 画像アップロード用リクエストを生成
+                let form = Form::new()
+                    .file("image", FILE_NAME)
+                    .expect("画像ファイルを開けませんでした。");
 
-            // 絵文字アップロード
-            upload_emoji(slack_url_add.as_str(), form, emoji_name, slack_config.api_token.as_str().unwrap())
-                .and_then(|d| {
-                    // ファイル削除
-                    remove_file(FILE_NAME)
-                        .expect("ファイル削除に失敗しました。");
+                // 絵文字アップロード
+                upload_emoji(slack_url_add.as_str(), form, emoji_name, slack_config.api_token.as_str().unwrap())
+                    .and_then(|d| {
+                        // ファイル削除
+                        remove_file(FILE_NAME)
+                            .expect("ファイル削除に失敗しました。");
 
-                    Ok(HttpResponse::Ok()
-                        .content_type("application/json")
-                        .body(serde_json::to_string(&d).unwrap())
-                        .into())
-                })
+                        Ok(HttpResponse::Ok()
+                            .content_type("application/json")
+                            .body(serde_json::to_string(&d).unwrap())
+                            .into())
+                    })
+            } else {
+                // 削除絵文字名
+                let emoji_name: &str = params.get("text").unwrap();
+
+                // ymlデータ取得
+                let slack_config = SlackConfig::new();
+                // slackへの画像アップロード用リクエストURLを作成
+                let slack_url_add = format!(
+                    r#"https://{}.slack.com/api/emoji.remove"#,
+                        slack_config.workspace_name.into_string().unwrap());
+
+                // 絵文字削除
+                remove_emoji(slack_url_add.as_str(), emoji_name, slack_config.api_token.as_str().unwrap())
+                    .and_then(|d| {
+                        Ok(HttpResponse::Ok()
+                            .content_type("application/json")
+                            .body(serde_json::to_string(&d).unwrap())
+                            .into())
+                    })
+            }
     })
 }
 
